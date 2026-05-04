@@ -62,27 +62,31 @@ prompt = ChatPromptTemplate.from_messages([
     ("human", "{question}")
 ])
 
+
 def format_docs(docs):
     """将检索到的多个 Document 对象拼接成一个大字符串[cite: 6]"""
     return "\n\n".join(doc.page_content for doc in docs)
 
+
 # 声明式组合 LCEL 链[cite: 6]
 rag_chain = (
-    {
-        "context": (lambda x: x["question"]) | retriever | format_docs,
-        "question": lambda x: x["question"],
-        "history": lambda x: x["history"]
-    }
-    | prompt 
-    | llm    
-    | StrOutputParser() # 提取纯文本[cite: 6]
+        {
+            "context": (lambda x: x["question"]) | retriever | format_docs,
+            "question": lambda x: x["question"],
+            "history": lambda x: x["history"]
+        }
+        | prompt
+        | llm
+        | StrOutputParser()  # 提取纯文本[cite: 6]
 )
+
 
 # 4. 组装历史记忆[cite: 6]
 def get_session_history(session_id: str) -> FileChatMessageHistory:
     """使用本地文件存储会话记忆，替代数据库[cite: 6]"""
     file_path = os.path.join(CHAT_HISTORY_DIR, f"{session_id}.json")
     return FileChatMessageHistory(file_path)
+
 
 chain_with_history = RunnableWithMessageHistory(
     runnable=rag_chain,
@@ -91,10 +95,12 @@ chain_with_history = RunnableWithMessageHistory(
     history_messages_key="history",
 )
 
+
 # 5. 定义前端请求体模型
 class ChatRequest(BaseModel):
     session_id: str
     query: str
+
 
 # 6. 定义接口
 @app.post("/api/chat")
@@ -103,14 +109,16 @@ async def chat_endpoint(request: ChatRequest):
     核心问答接口。
     采用 StreamingResponse 返回流式数据，为前端的“打字机效果”提供支持。
     """
+
     async def generate():
         config = {"configurable": {"session_id": request.session_id}}
         # 调用 stream 方法逐块生成回答[cite: 6]
         for chunk in chain_with_history.stream({"question": request.query}, config=config):
             yield chunk
-            
+
     # media_type 设置为 text/event-stream，契合 Server-Sent Events (SSE) 规范
     return StreamingResponse(generate(), media_type="text/event-stream")
+
 
 @app.get("/api/ping")
 async def ping():

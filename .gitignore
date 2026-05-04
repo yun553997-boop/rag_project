@@ -7,12 +7,13 @@ postgres_data/
 
 # 前端忽略
 frontend/node_modules/
+fronend/.vscode/
 frontend/dist/
 frontend/.env.local
 
 # 后端忽略
 backend/venv/
-# backend/.venv/
+backend/.idea/
 backend/__pycache__/
 backend/.env
 backend/data/
