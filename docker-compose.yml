@@ -1,9 +1,10 @@
 version: '3.8'
 
 services:
+  #数据库
   postgres:
     image: postgres:16
-    container_name: rag_project
+    container_name: rag_postgres
     restart: unless-stopped
     environment:
       POSTGRES_USER: rag_user
@@ -18,3 +19,31 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    
+  # 后端服务
+  backend:
+    build: ./backend
+    container_name: rag_backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy # 确保数据库就绪后再启动后端
+    env_file:
+      - ./backend/.env
+    volumes:
+      # 挂载这几个目录，防止容器重启后丢失知识库和历史记录
+      - ./backend/knowledge_base:/app/knowledge_base
+      - ./backend/chroma_db:/app/chroma_db
+      - ./backend/chat_histories:/app/chat_histories
+
+  # 前端服务
+  frontend:
+    build: ./frontend
+    container_name: rag_frontend
+    restart: unless-stopped
+    ports:
+      - "80:80"  # 本地 80 端口映射到 Nginx
+    depends_on:
+      - backend

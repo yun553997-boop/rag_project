@@ -11,7 +11,7 @@
         </div>
         <!-- 这里后续可以添加历史会话列表或文件上传组件 -->
          <el-divider />
-        
+
         <div class="upload-section">
           <h3>📚 丰富知识库</h3>
           <el-upload
@@ -39,16 +39,16 @@
       <el-container>
         <el-main class="chat-main" ref="chatMainRef">
           <div class="message-list">
-            <div 
-              v-for="(msg, index) in messages" 
+            <div
+              v-for="(msg, index) in messages"
               :key="index"
               :class="['message-item', msg.role === 'user' ? 'is-user' : 'is-ai']"
             >
               <div class="avatar">{{ msg.role === 'user' ? '🧑‍💻' : '🤖' }}</div>
               <!-- AI 消息使用 markdown 渲染，用户消息直接显示纯文本 -->
-              <div 
-                class="message-content" 
-                v-if="msg.role === 'ai'" 
+              <div
+                class="message-content"
+                v-if="msg.role === 'ai'"
                 v-html="renderMarkdown(msg.content)"
               ></div>
               <div class="message-content" v-else>{{ msg.content }}</div>
@@ -67,10 +67,10 @@
               resize="none"
               @keydown.enter.prevent="sendMessage"
             />
-            <el-button 
-              type="primary" 
-              class="send-btn" 
-              @click="sendMessage" 
+            <el-button
+              type="primary"
+              class="send-btn"
+              @click="sendMessage"
               :loading="isGenerating"
             >
               发送
@@ -85,7 +85,7 @@
 <script setup lang="ts">
 import { ref, nextTick } from 'vue'
 import MarkdownIt from 'markdown-it'
-import { ElMessage } from 'element-plus'
+import { ElMessage } from 'element-plus' // 引入消息提示组件
 
 // 初始化 Markdown 渲染器
 const md = new MarkdownIt({ breaks: true })
@@ -113,6 +113,25 @@ const scrollToBottom = async () => {
   }
 }
 
+// --- 文件上传处理逻辑 ---
+const handleUploadSuccess = (response: any, uploadFile: any) => {
+  if (response.error) {
+    ElMessage.error(`上传失败: ${response.error}`)
+  } else {
+    ElMessage.success(`文件 ${uploadFile.name} 已成功加入知识库！`)
+    messages.value.push({
+      role: 'ai',
+      content: `我已阅读并记住了 **${uploadFile.name}** 的内容，你可以随时向我提问啦！`
+    })
+    scrollToBottom()
+  }
+}
+
+const handleUploadError = (error: any) => {
+  ElMessage.error('网络请求失败，请检查后端服务是否正常运行。')
+}
+// ----------------------
+
 // 发送消息核心逻辑
 const sendMessage = async () => {
   const text = inputText.value.trim()
@@ -124,13 +143,11 @@ const sendMessage = async () => {
   isGenerating.value = true
   scrollToBottom()
 
-  // 2. 预先推入一个空的 AI 消息对象，用于一会接收流式字符
+  // 2. 预先推入一个空的 AI 消息对象
   messages.value.push({ role: 'ai', content: '' })
   const aiMessageIndex = messages.value.length - 1
 
   try {
-    // 3. 使用原生的 fetch 发送 POST 请求。
-    // 流式响应 (SSE) 使用原生的 fetch 比 Axios 更容易处理字节流。
     const response = await fetch('http://localhost:8000/api/chat', {
       method: 'POST',
       headers: {
@@ -145,45 +162,24 @@ const sendMessage = async () => {
     if (!response.ok) throw new Error('网络请求失败')
     if (!response.body) throw new Error('未获取到响应体')
 
-    // 4. 读取流式数据
     const reader = response.body.getReader()
     const decoder = new TextDecoder('utf-8')
 
     while (true) {
       const { done, value } = await reader.read()
       if (done) break
-    
-      
-      // 解码字节并拼接到当前的 AI 消息内容中
+
       const chunk = decoder.decode(value, { stream: true })
-      messages.value[aiMessageIndex].content += chunk
-      scrollToBottom() // 每次文字更新都滚动到底部
+      // 使用 "!" (非空断言) 告诉 TypeScript 我们确信这个索引是存在的，解决 TS2532 报错
+      messages.value[aiMessageIndex]!.content += chunk
+      scrollToBottom() 
     }
   } catch (error) {
     console.error(error)
-    messages.value[aiMessageIndex].content = '⚠️ 抱歉，请求后端失败，请检查服务是否正常启动。'
+    messages.value[aiMessageIndex]!.content = '⚠️ 抱歉，请求后端失败，请检查服务是否正常启动。'
   } finally {
     isGenerating.value = false
   }
-
-  const handleUploadSuccess = (response: any, uploadFile: any) => {
-  if (response.error) {
-    ElMessage.error(`上传失败: ${response.error}`)
-  } else {
-    ElMessage.success(`文件 ${uploadFile.name} 已成功加入知识库！`)
-    // 可以让 AI 自动说一句话
-    messages.value.push({ 
-      role: 'ai', 
-      content: `我已阅读并记住了 **${uploadFile.name}** 的内容，你可以随时向我提问啦！` 
-    })
-    scrollToBottom()
-  }
-}
-
-// 处理上传失败 (比如网络问题)
-const handleUploadError = (error: any) => {
-  ElMessage.error('网络请求失败，请检查后端服务是否正常运行。')
-}
 }
 </script>
 
