@@ -5,6 +5,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from dotenv import load_dotenv
+import shutil
+from fastapi import UploadFile, File
 
 # LangChain 核心与扩展组件[cite: 6, 11]
 from langchain_chroma import Chroma
@@ -14,6 +16,7 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.output_parsers import StrOutputParser
 from langchain_community.chat_message_histories import FileChatMessageHistory
 from langchain_core.runnables.history import RunnableWithMessageHistory
+from document_processor import DOCUMENTS_DIR, build_or_update_vectorstore
 
 # 加载环境变量 (需要 DASHSCOPE_API_KEY)
 load_dotenv()
@@ -32,7 +35,7 @@ app.add_middleware(
 
 # 2. 初始化模型与检索器[cite: 6]
 # 确保你已经跑过前面的脚本，生成了 chroma_db 文件夹
-llm = ChatTongyi(model="qwen-plus")  # 使用千问 plus 模型[cite: 6]
+llm = ChatTongyi(model="qwen-plus", streaming=True)  # 使用千问 plus 模型[cite: 6]
 embedding_model = DashScopeEmbeddings()
 
 CHROMA_PERSIST_DIR = "./chroma_db"
@@ -112,15 +115,47 @@ async def chat_endpoint(request: ChatRequest):
 
     async def generate():
         config = {"configurable": {"session_id": request.session_id}}
-        # 调用 stream 方法逐块生成回答[cite: 6]
-        for chunk in chain_with_history.stream({"question": request.query}, config=config):
+        # 使用 astream 异步流式输出，配合 async for
+        async for chunk in chain_with_history.astream({"question": request.query}, config=config):
+            # 某些情况下，如果在本地依然出现轻微的缓冲，可以在 yield 后面加上一个微小的延迟
+            # 但通常 astream 已经足够解决问题
             yield chunk
 
-    # media_type 设置为 text/event-stream，契合 Server-Sent Events (SSE) 规范
     return StreamingResponse(generate(), media_type="text/event-stream")
-
 
 @app.get("/api/ping")
 async def ping():
     """用于前端测试前后端连通性"""
     return {"message": "pong! API 服务运行正常 🟢"}
+
+
+@app.post("/api/upload")
+async def upload_document(file: UploadFile = File(...)):
+    """
+    接收前端上传的文件，保存到本地 knowledge_base 目录，并触发知识库更新。
+    """
+    try:
+        # 1. 确保文档目录存在
+        os.makedirs(DOCUMENTS_DIR, exist_ok=True)
+
+        # 2. 拼接保存路径并写入文件
+        file_path = os.path.join(DOCUMENTS_DIR, file.filename)
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+
+        # 3. 触发知识库更新逻辑 (把新文件向量化存入 Chroma)
+        build_or_update_vectorstore()
+
+        # 4. 重新初始化检索器 (为了让刚才存入的新数据立刻生效)
+        global vectorstore, retriever
+        vectorstore = Chroma(
+            persist_directory=CHROMA_PERSIST_DIR,
+            embedding_function=embedding_model,
+            collection_name=COLLECTION_NAME
+        )
+        retriever = vectorstore.as_retriever(search_kwargs={"k": 4})
+
+        return {"message": f"文件 {file.filename} 上传并入库成功！🚀"}
+
+    except Exception as e:
+        return {"error": f"上传处理失败: {str(e)}"}

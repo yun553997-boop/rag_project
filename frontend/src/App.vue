@@ -10,6 +10,29 @@
           <el-tag size="small" type="info">{{ sessionId }}</el-tag>
         </div>
         <!-- 这里后续可以添加历史会话列表或文件上传组件 -->
+         <el-divider />
+        
+        <div class="upload-section">
+          <h3>📚 丰富知识库</h3>
+          <el-upload
+            class="upload-demo"
+            drag
+            action="http://localhost:8000/api/upload"
+            :on-success="handleUploadSuccess"
+            :on-error="handleUploadError"
+            :show-file-list="false"
+            accept=".txt,.md,.pdf"
+          >
+            <div class="el-upload__text">
+              拖拽文件到此处或 <em>点击上传</em>
+            </div>
+            <template #tip>
+              <div class="el-upload__tip text-center">
+                支持 txt, md, pdf 文件
+              </div>
+            </template>
+          </el-upload>
+        </div>
       </el-aside>
 
       <!-- 右侧主聊天区 -->
@@ -62,6 +85,7 @@
 <script setup lang="ts">
 import { ref, nextTick } from 'vue'
 import MarkdownIt from 'markdown-it'
+import { ElMessage } from 'element-plus'
 
 // 初始化 Markdown 渲染器
 const md = new MarkdownIt({ breaks: true })
@@ -128,6 +152,7 @@ const sendMessage = async () => {
     while (true) {
       const { done, value } = await reader.read()
       if (done) break
+    
       
       // 解码字节并拼接到当前的 AI 消息内容中
       const chunk = decoder.decode(value, { stream: true })
@@ -140,6 +165,25 @@ const sendMessage = async () => {
   } finally {
     isGenerating.value = false
   }
+
+  const handleUploadSuccess = (response: any, uploadFile: any) => {
+  if (response.error) {
+    ElMessage.error(`上传失败: ${response.error}`)
+  } else {
+    ElMessage.success(`文件 ${uploadFile.name} 已成功加入知识库！`)
+    // 可以让 AI 自动说一句话
+    messages.value.push({ 
+      role: 'ai', 
+      content: `我已阅读并记住了 **${uploadFile.name}** 的内容，你可以随时向我提问啦！` 
+    })
+    scrollToBottom()
+  }
+}
+
+// 处理上传失败 (比如网络问题)
+const handleUploadError = (error: any) => {
+  ElMessage.error('网络请求失败，请检查后端服务是否正常运行。')
+}
 }
 </script>
 
@@ -247,5 +291,17 @@ body { margin: 0; font-family: 'Helvetica Neue', Helvetica, 'PingFang SC', 'Hira
 .send-btn {
   height: 74px; /* 匹配 textarea 3行的高度 */
   width: 100px;
+}
+
+.upload-section {
+  margin-top: 20px;
+}
+.upload-section h3 {
+  font-size: 16px;
+  margin-bottom: 15px;
+  color: #a0cfff;
+}
+.el-upload__tip {
+  color: #909399;
 }
 </style>
