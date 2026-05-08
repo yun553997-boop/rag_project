@@ -75,20 +75,19 @@ wrapt==2.1.2
 fastapi==0.136.1
 uvicorn==0.46.0
 pydantic==2.13.3
-python-multipart
 
 #RAG
 unstructured
 markdown
 
 # 数据库相关
-#sqlalchemy
-#psycopg2-binary
-#alembic
+sqlalchemy
+asyncpg   #异步引擎
+alembic
 
 # 环境与配置
 python-dotenv
-#pydantic-settings
+pydantic-settings
 
 # LangChain 核心及扩展
 langchain
@@ -98,5 +97,7 @@ chromadb
 
 # 通义千问 SDK
 dashscope
+
+
 
 python-multipart
