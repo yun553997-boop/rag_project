@@ -1,4 +1,4 @@
-# backend/api/router.py
+# 路由汇总文件
 from fastapi import APIRouter
 from api.endpoints import chat, document
 

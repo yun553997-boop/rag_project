@@ -1,4 +1,4 @@
-# backend/api/endpoints/document.py
+# 文件上传接口
 import os
 import shutil
 from fastapi import APIRouter, UploadFile, File

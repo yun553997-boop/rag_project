@@ -1,4 +1,4 @@
-# backend/api/endpoints/chat.py
+# 聊天与测试接口
 import os
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
