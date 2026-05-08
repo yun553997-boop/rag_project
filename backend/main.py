@@ -1,161 +1,25 @@
 # backend/main.py
-import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
-from dotenv import load_dotenv
-import shutil
-from fastapi import UploadFile, File
+from api.router import api_router
+from core.config import settings
 
-# LangChain 核心与扩展组件[cite: 6, 11]
-from langchain_chroma import Chroma
-from langchain_community.embeddings import DashScopeEmbeddings
-from langchain_community.chat_models.tongyi import ChatTongyi
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain_core.output_parsers import StrOutputParser
-from langchain_community.chat_message_histories import FileChatMessageHistory
-from langchain_core.runnables.history import RunnableWithMessageHistory
-from document_processor import DOCUMENTS_DIR, build_or_update_vectorstore
+# 使用 core/config.py 中的全局配置
+app = FastAPI(title=settings.PROJECT_NAME)
 
-# 加载环境变量 (需要 DASHSCOPE_API_KEY)
-load_dotenv()
-
-app = FastAPI(title="个人知识库 RAG API")
-
-# 1. 配置 CORS：允许跨域请求
-# 这是前后端分离的必经之路，允许你的 Vue 项目 (比如运行在 5173 端口) 访问这个 API
+# 1. 配置 CORS 中间件
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # 开发阶段允许所有源，实际部署时建议改为 Vue 部署的域名
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# 2. 初始化模型与检索器[cite: 6]
-# 确保你已经跑过前面的脚本，生成了 chroma_db 文件夹
-llm = ChatTongyi(model="qwen-plus", streaming=True)  # 使用千问 plus 模型[cite: 6]
-embedding_model = DashScopeEmbeddings()
+# 2. 挂载所有 API 路由
+# 这里统一加上 /api 前缀，里面的接口就会变成 /api/chat, /api/upload 等
+app.include_router(api_router, prefix="/api")
 
-CHROMA_PERSIST_DIR = "./chroma_db"
-COLLECTION_NAME = "my_notes_collection"
-CHAT_HISTORY_DIR = "./chat_histories"
-
-os.makedirs(CHAT_HISTORY_DIR, exist_ok=True)
-
-# 加载本地 Chroma 向量库[cite: 6]
-vectorstore = Chroma(
-    persist_directory=CHROMA_PERSIST_DIR,
-    embedding_function=embedding_model,
-    collection_name=COLLECTION_NAME
-)
-# 将向量库包装为检索器，每次返回 k=4 个相关片段[cite: 6]
-retriever = vectorstore.as_retriever(search_kwargs={"k": 4})
-
-# 3. 构造 RAG 提示词与 LCEL 链[cite: 6]
-system_prompt = """你是一个专业的知识问答助手。请严格基于以下【上下文】信息回答【问题】。
-如果上下文中没有相关信息，请直接说“我知识库中暂时没有相关信息”，不要自己编造答案。
-【上下文】：
-{context}"""
-
-prompt = ChatPromptTemplate.from_messages([
-    ("system", system_prompt),
-    MessagesPlaceholder(variable_name="history"),  # 注入历史对话[cite: 6]
-    ("human", "{question}")
-])
-
-
-def format_docs(docs):
-    """将检索到的多个 Document 对象拼接成一个大字符串[cite: 6]"""
-    return "\n\n".join(doc.page_content for doc in docs)
-
-
-# 声明式组合 LCEL 链[cite: 6]
-rag_chain = (
-        {
-            "context": (lambda x: x["question"]) | retriever | format_docs,
-            "question": lambda x: x["question"],
-            "history": lambda x: x["history"]
-        }
-        | prompt
-        | llm
-        | StrOutputParser()  # 提取纯文本[cite: 6]
-)
-
-
-# 4. 组装历史记忆[cite: 6]
-def get_session_history(session_id: str) -> FileChatMessageHistory:
-    """使用本地文件存储会话记忆，替代数据库[cite: 6]"""
-    file_path = os.path.join(CHAT_HISTORY_DIR, f"{session_id}.json")
-    return FileChatMessageHistory(file_path)
-
-
-chain_with_history = RunnableWithMessageHistory(
-    runnable=rag_chain,
-    get_session_history=get_session_history,
-    input_messages_key="question",
-    history_messages_key="history",
-)
-
-
-# 5. 定义前端请求体模型
-class ChatRequest(BaseModel):
-    session_id: str
-    query: str
-
-
-# 6. 定义接口
-@app.post("/api/chat")
-async def chat_endpoint(request: ChatRequest):
-    """
-    核心问答接口。
-    采用 StreamingResponse 返回流式数据，为前端的“打字机效果”提供支持。
-    """
-
-    async def generate():
-        config = {"configurable": {"session_id": request.session_id}}
-        # 使用 astream 异步流式输出，配合 async for
-        async for chunk in chain_with_history.astream({"question": request.query}, config=config):
-            # 某些情况下，如果在本地依然出现轻微的缓冲，可以在 yield 后面加上一个微小的延迟
-            # 但通常 astream 已经足够解决问题
-            yield chunk
-
-    return StreamingResponse(generate(), media_type="text/event-stream")
-
-@app.get("/api/ping")
-async def ping():
-    """用于前端测试前后端连通性"""
-    return {"message": "pong! API 服务运行正常 🟢"}
-
-
-@app.post("/api/upload")
-async def upload_document(file: UploadFile = File(...)):
-    """
-    接收前端上传的文件，保存到本地 knowledge_base 目录，并触发知识库更新。
-    """
-    try:
-        # 1. 确保文档目录存在
-        os.makedirs(DOCUMENTS_DIR, exist_ok=True)
-
-        # 2. 拼接保存路径并写入文件
-        file_path = os.path.join(DOCUMENTS_DIR, file.filename)
-        with open(file_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
-
-        # 3. 触发知识库更新逻辑 (把新文件向量化存入 Chroma)
-        build_or_update_vectorstore()
-
-        # 4. 重新初始化检索器 (为了让刚才存入的新数据立刻生效)
-        global vectorstore, retriever
-        vectorstore = Chroma(
-            persist_directory=CHROMA_PERSIST_DIR,
-            embedding_function=embedding_model,
-            collection_name=COLLECTION_NAME
-        )
-        retriever = vectorstore.as_retriever(search_kwargs={"k": 4})
-
-        return {"message": f"文件 {file.filename} 上传并入库成功！🚀"}
-
-    except Exception as e:
-        return {"error": f"上传处理失败: {str(e)}"}
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
