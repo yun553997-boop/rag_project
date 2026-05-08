@@ -34,6 +34,7 @@ services:
       - ./backend/.env
     volumes:
       # 挂载这几个目录，防止容器重启后丢失知识库和历史记录
+      - ./backend:/app  #新增这一行：将本地代码双向映射到容器内
       - ./backend/knowledge_base:/app/knowledge_base
       - ./backend/chroma_db:/app/chroma_db
       - ./backend/chat_histories:/app/chat_histories
